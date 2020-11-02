@@ -8,26 +8,32 @@
                Physical review letters 110, no. 14 (2013): 148701.
         .. [3] Karrer, Brian, and Mark EJ Newman. 'Stochastic blockmodels and community structure in networks.'
                Physical Review E 83, no. 1 (2011): 016107."""
-import numpy as np
-import scipy.sparse
-import scipy.misc as misc
-from munkres import Munkres # for correctness evaluation
-import sys
-from multiprocessing import sharedctypes
-import ctypes
-from compute_delta_entropy import compute_delta_entropy
 from collections import defaultdict
-from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero, nonzero_dict, fast_sparse_array
 from collections import Iterable
+import ctypes
+from multiprocessing import sharedctypes
+import numpy as np
+import random
+import scipy.sparse
+import scipy.special as misc
+import sys
 import timeit
+from typing import Dict, List, Tuple
 
 use_graph_tool_options = False # for visualiziing graph partitions (optional)
 if use_graph_tool_options:
     import graph_tool.all as gt
+from munkres import Munkres # for correctness evaluation
+
+from compute_delta_entropy import compute_delta_entropy
+
+from fast_sparse_array import fast_sparse_array, nonzero_slice, take_nonzero, nonzero_dict, fast_sparse_array
+
 
 def assert_close(x, y, tol=1e-9):
     if np.abs(x - y) > tol:
         raise Exception("Equality assertion failed: %s %s" % (x,y))
+
 
 def coo_to_flat(x, size):
     x_i, x_v = x
@@ -35,8 +41,10 @@ def coo_to_flat(x, size):
     f[x_i] = x_v
     return f
 
+
 def is_sorted(x):
     return len(x) == 1 or (x[1:] >= x[0:-1]).all()
+
 
 def is_in_sorted(needle, haystack):
     if len(haystack) == 0:
@@ -54,12 +62,12 @@ search_array = is_in_sorted
 #search_array = np.in1d
 
 
-import random
 def random_permutation(iterable, r=None):
     "Random selection from itertools.permutations(iterable, r)"
     pool = tuple(iterable)
     r = len(pool) if r is None else r
     return tuple(random.sample(pool, r))
+
 
 def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_neighbors=None, in_neighbors=None,alg_state=None):
     """Load the graph from a TSV file with standard format, and the truth partition if available
@@ -208,27 +216,6 @@ def load_graph(input_filename, load_true_partition, strm_piece_num=None, out_nei
     else:
         return out_neighbors, in_neighbors, N, E
 
-def decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, decimated_piece):
-    """
-    """
-    in_neighbors = in_neighbors[decimated_piece::decimation]
-    out_neighbors = out_neighbors[decimated_piece::decimation]
-    true_partition = true_partition[decimated_piece::decimation]
-    E = sum(len(v) for v in out_neighbors)
-    N = np.int64(len(in_neighbors))
-
-    for i in range(N):
-        xx = (in_neighbors[i][:,0] % decimation) == decimated_piece
-        in_neighbors[i] = in_neighbors[i][xx, :]
-        xx = (out_neighbors[i][:,0] % decimation) == decimated_piece
-        out_neighbors[i] = out_neighbors[i][xx, :]
-
-    for i in range(N):
-        in_neighbors[i][:,0] = in_neighbors[i][:,0] / decimation
-        out_neighbors[i][:,0] = out_neighbors[i][:,0] / decimation
-
-    return out_neighbors, in_neighbors, N, E, true_partition
-
 
 def initialize_partition_variables():
     """Initialize variables for the iterations to find the best partition with the optimal number of blocks
@@ -345,6 +332,7 @@ def multinomial_choice_fast(a, p):
     s = np.searchsorted(c, u, side='left')
     return a[s]
 
+
 def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, B, agg_move):
     """Propose a new block assignment for the current node or block
 
@@ -411,13 +399,12 @@ def propose_new_partition(r, neighbors, neighbor_weights, n_neighbors, b, M, d, 
                 s2 = (r + 1 + np.random.randint(B - 1, dtype=np.int64)) % B
                 return s2
 
-        s2 = multinomial_choice_fast(multinomial_choices, p = multinomial_probs)
+        s2 = multinomial_choice_fast(multinomial_choices, p=multinomial_probs)
         return s2
 
 
 def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out, b_in, count_in, count_self,
                                                        agg_move, use_sparse_alg):
-
     use_sparse_alg = not isinstance(M, np.ndarray)
     use_sparse_data = not isinstance(M, np.ndarray)
 
@@ -527,17 +514,31 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
         M_s_row[r] -= offset
         M_s_row[s] += offset
         new_M_s_row = M_s_row
+        # if np.sum(new_M_s_row < 0) > 0:
+        #     print("where_b_in_s: ", where_b_in_s)
+        #     print("count_self: ", count_self)
+        #     print("offset: ", offset)
+        #     print("r {} -> s {}".format(r, s))
+        #     x = M[s, :]
+        #     print("M[s, :]: ", x)
+        #     x[b_out] += count_out
+        #     print("M_s_row[b_out] += count_out: ", x)
+        #     x[r] -= offset
+        #     print("M_s_row[r] -= offset: ", x)
+        #     x[s] += offset
+        #     print("M_s_row[s] += offset: ", x)
+        #     raise FloatingPointError
 
     if use_sparse_alg:
         if use_sparse_data:
             M_s_row_d = M.take_dict(s, 0).copy()
-            for k,v in zip(b_out,count_out):
+            for k, v in zip(b_out, count_out):
                 M_s_row_d[k] += v
             M_s_row_d[r] -= offset
             M_s_row_d[s] += offset
             new_M_s_row = M_s_row_d
         else:
-            M_s_row_i, M_s_row_v = take_nonzero(M, s, 0, sort = True)
+            M_s_row_i, M_s_row_v = take_nonzero(M, s, 0, sort=True)
             M_s_row_in_b_out = search_array(M_s_row_i, b_out)
             b_out_in_M_s_row = search_array(b_out, M_s_row_i)
 
@@ -614,6 +615,7 @@ def compute_new_rows_cols_interblock_edge_count_matrix(M, r, s, b_out, count_out
             new_M_s_col = (M_s_col_i, M_s_col_v)
 
     return new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col
+# End of compute_new_rows_cols_interblock_edge_matrix()
 
 
 def compute_new_block_degrees(r, s, d_out, d_in, d, k_out, k_in, k):
@@ -806,6 +808,7 @@ def compute_Hastings_correction(b_out, count_out, b_in, count_in, r, s, M, M_r_r
         p_backward += np.sum(count * (M_r_col[t] + 1) / (d_new[t] + B))
 
     return p_backward / p_forward
+
 
 def carry_out_best_merges(delta_entropy_for_each_block, best_merges, best_merge_for_each_block, b, B, B_to_merge, verbose=False):
     """Execute the best merge (agglomerative) moves to reduce a set number of blocks

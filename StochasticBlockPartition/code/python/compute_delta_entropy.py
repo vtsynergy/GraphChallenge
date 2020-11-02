@@ -2,11 +2,13 @@ import numpy as np
 from fast_sparse_array import nonzero_slice, take_nonzero
 from collections import defaultdict
 
+
 def entropy_row_calc(x, y, c):
     mask = x.nonzero()[0]
     xm = x[mask]
     ym = y[mask]
     return np.sum(xm * (np.log(xm) - np.log(ym * c)))
+
 
 def entropy_row_calc_ignore(x, y, c, r, s):
     if 0:
@@ -19,6 +21,7 @@ def entropy_row_calc_ignore(x, y, c, r, s):
     xm = x[mask]
     ym = y[mask]
     return np.sum(xm * (np.log(xm) - np.log(ym * c)))
+
 
 def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal with a faster method."""
@@ -40,6 +43,7 @@ def compute_delta_entropy_alt(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out
     d7 = entropy_row_calc_ignore(M_t2_s,  d_out, d_in[s], r, s)
     return -d0 - d1 - d2 - d3 + d4 + d5 + d6 + d7
 
+
 def entropy_row_nz(x, y, c):
     # if c == 0:
     #     #print("Zero encountered but returning 0")
@@ -50,9 +54,15 @@ def entropy_row_nz(x, y, c):
     # if not (y>0).all():
     #     print("Invalid y value encountered")
     #     print("y", y)
-
+    # try:
     S = np.sum(x * (np.log(x) - np.log(y * c)))
+    # except FloatingPointError as e:
+    #     print("x: ", x)
+    #     print("y: ", y)
+    #     print("c: ", c)
+    #     raise e
     return S
+
 
 def entropy_row_nz_ignore(x, y, c, x_nz, r, s):
     # if c == 0:
@@ -70,6 +80,7 @@ def entropy_row_nz_ignore(x, y, c, x_nz, r, s):
     ym = y[mask]
 
     return np.sum(xm * (np.log(xm) - np.log(ym * c)))
+
 
 def compute_delta_entropy_sparse(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     """Compute change in entropy under the proposal with a faster method."""
@@ -115,22 +126,30 @@ def compute_delta_entropy_sparse(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_
     # only keep non-zero entries to avoid unnecessary computation
 
     d0 = entropy_row_nz(M_r_row, d_in_new[M_r_row_i], d_out_new[r])
+    # try:
     d1 = entropy_row_nz(M_s_row, d_in_new[M_s_row_i], d_out_new[s])
+    # except FloatingPointError as e:
+    #     print("M_s_row: ", M_s_row)
+    #     print("d_in_new: ", d_in_new)
+    #     print("M_s_row_i: ", M_s_row_i)
+    #     print("d_out_new[s]: ", d_out_new[s])
+    #     raise e
 
     d2 = entropy_row_nz_ignore(M_r_col, d_out_new[M_r_col_i], d_in_new[r], M_r_col_i, r, s)
     d3 = entropy_row_nz_ignore(M_s_col, d_out_new[M_s_col_i], d_in_new[s], M_s_col_i, r, s)
 
-    d4 = entropy_row_nz(M_r_t1,  d_in[M_r_t1_i], d_out[r])
-    d5 = entropy_row_nz(M_s_t1,  d_in[M_s_t1_i], d_out[s])
+    d4 = entropy_row_nz(M_r_t1, d_in[M_r_t1_i], d_out[r])
+    d5 = entropy_row_nz(M_s_t1, d_in[M_s_t1_i], d_out[s])
 
-    d6 = entropy_row_nz_ignore(M_t2_r,  d_out[M_t2_r_i], d_in[r], M_t2_r_i, r, s)
-    d7 = entropy_row_nz_ignore(M_t2_s,  d_out[M_t2_s_i], d_in[s], M_t2_s_i, r, s)
+    d6 = entropy_row_nz_ignore(M_t2_r, d_out[M_t2_r_i], d_in[r], M_t2_r_i, r, s)
+    d7 = entropy_row_nz_ignore(M_t2_s, d_out[M_t2_s_i], d_in[s], M_t2_s_i, r, s)
 
     return -d0 - d1 - d2 - d3 + d4 + d5 + d6 + d7
 
 
 def compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
-    """Compute change in entropy under the proposal. Reduced entropy means the proposed block is better than the current block.
+    """Compute change in entropy under the proposal. Reduced entropy means the proposed block is better than the
+    current block.
 
         Parameters
         ----------
@@ -228,13 +247,16 @@ def compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_ou
 
     return delta_entropy
 
+
 def compute_delta_entropy_verify(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new):
     delta_entropy1 = compute_delta_entropy_orig(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new)
     delta_entropy2 = compute_delta_entropy_sparse(r, s, M, M_r_row, M_s_row, M_r_col, M_s_col, d_out, d_in, d_out_new, d_in_new)
     assert(np.abs(delta_entropy1 - delta_entropy2) < 1e-9)
     return delta_entropy1
 
+
 compute_delta_entropy = compute_delta_entropy_sparse
+
 
 if __name__ == '__main__':
     import sys, pickle, timeit

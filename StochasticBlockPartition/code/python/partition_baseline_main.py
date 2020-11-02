@@ -1,4 +1,4 @@
-from partition_baseline_support import *
+
 import multiprocessing as mp
 import multiprocessing.pool
 from multiprocessing import Pool, Value, Semaphore, Manager, Queue, current_process
@@ -8,8 +8,6 @@ import timeit
 import os, sys, argparse
 import time, struct
 import traceback
-import numpy.random
-from compute_delta_entropy import compute_delta_entropy
 import random
 import shutil
 
@@ -17,6 +15,18 @@ try:
     from queue import Empty as queue_empty
 except:
     from Queue import Empty as queue_empty
+    
+import numpy.random
+
+from compute_delta_entropy import compute_delta_entropy
+from partition_baseline_support import *
+
+from distribute import decimate_graph
+from distribute import decimate_graph_snowball
+from distribute import resolve_partitions
+from distribute import resolve_two_partitions
+# from distribute import *
+from streaming import *
 
 
 compressed_threshold = 5000
@@ -24,11 +34,13 @@ compressed_threshold = 5000
 def is_compressed(M):
     return not isinstance(M, np.ndarray)
 
+
 def random_permutation(iterable, r=None):
     "Random selection from itertools.permutations(iterable, r)"
     pool = tuple(iterable)
     r = len(pool) if r is None else r
     return tuple(random.sample(pool, r))
+
 
 def entropy_max_argsort(x):
     a = np.argsort(x)
@@ -229,6 +241,7 @@ def propose_node_movement_wrapper(tup):
         return
     else:
         return rank,mypid,update_id,start,stop,step
+
 
 def propose_node_movement_sparse_wrapper(tup):
     global update_id, partition, M, block_degrees, block_degrees_out, block_degrees_in, mypid, mypid_idx, worker_pids
@@ -477,11 +490,13 @@ def propose_node_movement(current_node, partition, out_neighbors, in_neighbors, 
 
     return current_node, current_block, proposal, delta_entropy, p_accept
 
+
 def coo_to_flat(x, size):
     x_i, x_v = x
     f = np.zeros(size)
     f[x_i] = x_v
     return f
+
 
 def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col, args):
     r = b[ni]
@@ -516,6 +531,7 @@ def update_partition_single(b, ni, s, M, M_r_row, M_s_row, M_r_col, M_s_col, arg
 
     return b, M
 
+
 def shared_memory_copy(z):
     prod = reduce((lambda x,y : x*y), (i for i in z.shape))
     ctype = {"float64" : ctypes.c_double, "int64" : ctypes.c_int64, "bool" : ctypes.c_bool}[str(z.dtype)]
@@ -524,6 +540,7 @@ def shared_memory_copy(z):
     a[:] = z
     return a
 
+
 def shared_memory_empty(shape, dtype='int64'):
     prod = reduce((lambda x,y : x*y), (i for i in shape))
     ctype = {"float64" : ctypes.c_double, "float" : ctypes.c_double, "int64" : ctypes.c_int64, "int" : ctypes.c_int, "bool" : ctypes.c_bool}[str(dtype)]
@@ -531,10 +548,12 @@ def shared_memory_empty(shape, dtype='int64'):
     a = np.frombuffer(raw, dtype=dtype).reshape(shape)
     return a
 
+
 def shared_memory_to_private(z):
     x = np.empty(z.shape, dtype=z.dtype)
     x[:] = z
     return x
+
 
 def nodal_moves_sequential(batch_size, max_num_nodal_itr, delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy_cur, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args):
     global block_sum_time_cum
@@ -961,7 +980,7 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
             for current_block_idx,current_block in enumerate(current_blocks):
                 best_merge_for_each_block[current_block] = best_merge[current_block_idx]
                 delta_entropy_for_each_block[current_block] = best_delta_entropy[current_block_idx]
-            n_proposals_evaluated += fresh_proposals_evaluated                
+            n_proposals_evaluated += fresh_proposals_evaluated
         pool.close()
     else:
         current_blocks,best_merge,best_delta_entropy,fresh_proposals_evaluated \
@@ -1072,28 +1091,6 @@ def entropy_for_block_count(num_blocks, num_target_blocks, delta_entropy_thresho
         graph_object = plot_graph_with_partition(out_neighbors, partition, graph_object)
 
     return overall_entropy, n_proposals_evaluated, n_merges, total_num_nodal_moves_itr, M, block_degrees, block_degrees_out, block_degrees_in, num_blocks_merged, partition, optimal_stop_found, dS_dn
-
-
-def load_graph_parts(input_filename, args):
-    true_partition_available = False
-    if not os.path.isfile(input_filename + '.tsv') and not os.path.isfile(input_filename + '_1.tsv'):
-            print("File doesn't exist: '{}'!".format(input_filename))
-            sys.exit(1)
-
-    if args.parts >= 1:
-            print('\nLoading partition 1 of {} ({}) ...'.format(args.parts, input_filename + "_1.tsv"))
-            out_neighbors, in_neighbors, N, E, true_partition = load_graph(input_filename, load_true_partition=true_partition_available, strm_piece_num=1)
-            for part in range(2, args.parts + 1):
-                    print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
-                    out_neighbors, in_neighbors, N, E = load_graph(input_filename, load_true_partition=False, strm_piece_num=part, out_neighbors=out_neighbors, in_neighbors=in_neighbors)
-    else:
-        if true_partition_available:
-            out_neighbors, in_neighbors, N, E, true_partition = load_graph(input_filename, load_true_partition=true_partition_available)
-        else:
-            out_neighbors, in_neighbors, N, E = load_graph(input_filename, load_true_partition=true_partition_available)
-            true_partition = None
-
-    return out_neighbors, in_neighbors, N, E, true_partition
 
 
 def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_bracket = False, verbose = 0, alg_state = None, num_block_reduction_rate = 0.50, min_number_blocks = 0):
@@ -1238,6 +1235,7 @@ def find_optimal_partition(out_neighbors, in_neighbors, N, E, args, stop_at_brac
 
     return alg_state, partition
 
+
 def find_optimal_partition_wrapper(tup):
     args = syms['args']
     args.threads = max(1, args.threads // args.decimation)
@@ -1259,342 +1257,6 @@ class NoDaemonProcess(mp.Process):
 class NonDaemonicPool(multiprocessing.pool.Pool):
     Process = NoDaemonProcess
 
-
-def merge_partitions(partitions, stop_pieces, out_neighbors, verbose, use_sparse_alg, use_sparse_data):
-    """
-    Create a unified graph block partition from the supplied partition pieces into a partiton of size stop_pieces.
-    """
-
-    pieces = len(partitions)
-    N = sum(len(i) for i in partitions)
-
-    # The temporary partition variable is for the purpose of computing M.
-    # The axes of M are concatenated block ids from each partition.
-    # And each partition[i] will have an offset added to so all the interim partition ranges are globally unique.
-    #
-    partition = np.zeros(N, dtype=int)
-
-    while pieces > stop_pieces:
-
-        Bs = [max(partitions[i]) + 1 for i in range(pieces)]
-        B =  sum(Bs)
-
-        partition_offsets = np.zeros(pieces, dtype=int)
-        partition_offsets[1:] = np.cumsum(Bs)[:-1]
-
-        if verbose > 1:
-            print("")
-            print("Reconstitute graph from %d pieces B[piece] = %s" % (pieces,Bs))
-            print("partition_offsets = %s" % partition_offsets)
-
-        # It would likely be faster to re-use already computed values of M from pieces:
-        #     M[ 0:B0,     0:B0   ] = M_0
-        #     M[B0:B0+B1, B0:B0+B1] = M_1
-        # Instead of relying on initialize_edge_counts.
-
-        M, block_degrees_out, block_degrees_in, block_degrees \
-            = initialize_edge_counts(out_neighbors, B, partition, use_sparse_data)
-
-        if verbose > 2:
-            print("M.shape = %s, M = \n%s" % (str(M.shape),M))
-
-        next_partitions = []
-        for i in range(0, pieces, 2):
-            print("Merge piece %d and %d into %d" % (i, i + 1, i // 2))
-            partitions[i],_ = merge_two_partitions(M, block_degrees_out, block_degrees_out, block_degrees_out,
-                                                   partitions[i], partitions[i + 1],
-                                                   partition_offsets[i], partition_offsets[i + 1],
-                                                   Bs[i], Bs[i + 1],
-                                                   verbose,
-                                                   use_sparse_alg,
-                                                   use_sparse_data)
-            next_partitions.append(np.concatenate((partitions[i], partitions[i+1])))
-
-        partitions = next_partitions
-        pieces //= 2
-
-    return partitions
-
-
-
-def merge_two_partitions(M, block_degrees_out, block_degrees_in, block_degrees, partition0, partition1, partition_offset_0, partition_offset_1, B0, B1, verbose, use_sparse_alg, use_sparse_data):
-    """
-    Merge two partitions each from a decimated piece of the graph.
-    Note
-        M : ndarray or sparse matrix (int), shape = (#blocks, #blocks)
-                    block count matrix between all the blocks, of which partition 0 and partition 1 are just subsets
-        partition_offset_0 and partition_offset_1 are the starting offsets within M of each partition piece
-    """
-    # Now reduce by merging down blocks from partition 0 into partition 1.
-    # This requires computing delta_entropy over all of M (hence the partition_offsets are needed).
-
-    delta_entropy = np.empty((B0,B1))
-
-    for r in range(B0):
-        current_block = r + partition_offset_0
-
-        # Index of non-zero block entries and their associated weights
-        in_idx, in_weight = take_nonzero(M, current_block, 1, sort = False)
-        out_idx, out_weight = take_nonzero(M, current_block, 0, sort = False)
-
-        block_neighbors = np.concatenate((in_idx, out_idx))
-        block_neighbor_weights = np.concatenate((in_weight, out_weight))
-
-        num_out_block_edges = sum(out_weight)
-        num_in_block_edges = sum(in_weight)
-        num_block_edges = num_out_block_edges + num_in_block_edges
-
-        for s in range(B1):
-            proposal = s + partition_offset_1
-
-            new_M_r_row, new_M_s_row, new_M_r_col, new_M_s_col \
-                = compute_new_rows_cols_interblock_edge_count_matrix(M, current_block, proposal,
-                                                                     out_idx, out_weight,
-                                                                     in_idx, in_weight,
-                                                                     M[current_block, current_block], agg_move = 1,
-                                                                     use_sparse_alg = use_sparse_alg)
-
-            block_degrees_out_new, block_degrees_in_new, block_degrees_new \
-                = compute_new_block_degrees(current_block,
-                                            proposal,
-                                            block_degrees_out,
-                                            block_degrees_in,
-                                            block_degrees,
-                                            num_out_block_edges,
-                                            num_in_block_edges,
-                                            num_block_edges)
-
-            delta_entropy[r, s] = compute_delta_entropy(current_block, proposal, M,
-                                                        new_M_r_row,
-                                                        new_M_s_row,
-                                                        new_M_r_col,
-                                                        new_M_s_col,
-                                                        block_degrees_out,
-                                                        block_degrees_in,
-                                                        block_degrees_out_new,
-                                                        block_degrees_in_new)
-
-    best_merge_for_each_block = np.argmin(delta_entropy, axis = 1)
-
-    if verbose > 2:
-        print("delta_entropy = \n%s" % delta_entropy)
-        print("best_merge_for_each_block = %s" % best_merge_for_each_block)
-
-    delta_entropy_for_each_block = delta_entropy[np.arange(delta_entropy.shape[0]), best_merge_for_each_block]
-
-    # Global number of blocks (when all pieces are considered together).
-    num_blocks = M.shape[0]
-    num_blocks_to_merge = B0
-    best_merges = delta_entropy_for_each_block.argsort()
-
-    # Note: partition0 will be modified in carry_out_best_merges
-    (partition, num_blocks) = carry_out_best_merges(delta_entropy_for_each_block,
-                                                    best_merges,
-                                                    best_merge_for_each_block + partition_offset_1,
-                                                    partition0,
-                                                    num_blocks,
-                                                    num_blocks_to_merge, verbose=(verbose > 2))
-
-    return partition, num_blocks
-
-def naive_streaming(args):
-    input_filename = args.input_filename
-    # Emerging edge piece by piece streaming.
-    # The assumption is that unlike parallel decimation, where a static graph is cut into
-    # multiple subgraphs which do not have the same nodes, the same node set is potentially
-    # present in each piece.
-    #
-    out_neighbors,in_neighbors = None,None
-    t_all_parts = 0.0
-
-    for part in range(1, args.parts + 1):
-        print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
-        t_part = 0.0
-
-        if part == 1:
-            out_neighbors, in_neighbors, N, E, true_partition = \
-                    load_graph(input_filename,
-                               load_true_partition=1,
-                               strm_piece_num=part,
-                               out_neighbors=None,
-                               in_neighbors=None)
-        else:
-            out_neighbors, in_neighbors, N, E = \
-                    load_graph(input_filename,
-                               load_true_partition=0,
-                               strm_piece_num=part,
-                               out_neighbors=out_neighbors,
-                               in_neighbors=in_neighbors)
-
-        # Run to ground.
-        print('Running partition for part %d N %d E %d' % (part,N,E))
-
-        t0 = timeit.default_timer()
-        t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = None)
-        t1 = timeit.default_timer()
-        t_part += (t1 - t0)
-        t_all_parts += t_part
-
-        if part == args.parts:
-            print('Evaluate final partition.')
-        else:
-            print('Evaluate part %d' % part)
-
-        precision,recall = evaluate_partition(true_partition, partition)
-        print('Elapsed compute time for part %d is %f cumulative %f precision %f recall %f' % (part,t_part,t_all_parts,precision,recall))
-
-    return t_all_parts
-
-
-def copy_alg_state(alg_state):
-    # Create a deep copy of algorithmic state.
-    (hist, num_blocks, overall_entropy, partition, interblock_edge_count,block_degrees_out,block_degrees_in,block_degrees,golden_ratio_bracket_established,delta_entropy_threshold,num_blocks_to_merge,optimal_num_blocks_found,n_proposals_evaluated,total_num_nodal_moves) = alg_state
-
-    (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
-
-    hist_copy = tuple((i.copy() for i in hist))
-    try:
-        num_blocks_copy = num_blocks.copy()
-    except AttributeError:
-        num_blocks_copy = num_blocks
-    overall_entropy_copy = overall_entropy.copy()
-    partition_copy = partition.copy()
-    interblock_edge_count_copy = interblock_edge_count.copy()
-    block_degrees_out_copy = block_degrees_out.copy()
-    block_degrees_in_copy = block_degrees_in.copy()
-    block_degrees_copy = block_degrees.copy()
-    golden_ratio_bracket_established_copy = golden_ratio_bracket_established # bool
-    delta_entropy_threshold_copy = delta_entropy_threshold # float
-    num_blocks_to_merge_copy = num_blocks_to_merge # int
-    optimal_num_blocks_found_copy = optimal_num_blocks_found # bool
-    n_proposals_evaluated_copy = n_proposals_evaluated # int
-    total_num_nodal_moves_copy = total_num_nodal_moves # int
-
-
-    alg_state_copy = (hist_copy, num_blocks_copy, overall_entropy_copy, partition_copy, interblock_edge_count_copy, block_degrees_out_copy, block_degrees_in_copy, block_degrees_copy, golden_ratio_bracket_established_copy, delta_entropy_threshold_copy, num_blocks_to_merge_copy, optimal_num_blocks_found_copy, n_proposals_evaluated_copy, total_num_nodal_moves_copy)
-
-    return alg_state_copy
-
-
-
-def incremental_streaming(args):
-    input_filename = args.input_filename
-    # Emerging edge piece by piece streaming.
-    # The assumption is that unlike parallel decimation, where a static graph is cut into
-    # multiple subgraphs which do not have the same nodes, the same node set is potentially
-    # present in each piece.
-    #
-    out_neighbors,in_neighbors,alg_state = None,None,None
-    t_all_parts = 0.0
-
-    for part in range(1, args.parts + 1):
-        t_part = 0.0
-
-        if part == 1:
-            print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
-
-            out_neighbors, in_neighbors, N, E, true_partition = \
-                    load_graph(input_filename,
-                               load_true_partition=1,
-                               strm_piece_num=part,
-                               out_neighbors=None,
-                               in_neighbors=None)
-            min_number_blocks = N / 2
-        else:
-            # Load true_partition here so the sizes of the arrays all equal N.
-            if alg_state:
-                print('Loading partition {} of {} ({}) ...'.format(part, args.parts, input_filename + "_" + str(part) + ".tsv"))
-
-                out_neighbors, in_neighbors, N, E, alg_state,t_compute = \
-                                                load_graph(input_filename,
-                                                           load_true_partition=1,
-                                                           strm_piece_num=part,
-                                                           out_neighbors=out_neighbors,
-                                                           in_neighbors=in_neighbors,
-                                                           alg_state = alg_state)
-                t_part += t_compute
-                print("Intermediate load_graph compute time for part %d is %f" % (part,t_compute))
-                t0 = timeit.default_timer()
-                hist = alg_state[0]
-                (old_partition, old_interblock_edge_count, old_block_degrees, old_block_degrees_out, old_block_degrees_in, old_overall_entropy, old_num_blocks) = hist
-
-                print("Incrementally updated alg_state for part %d" %(part))
-                print('New Overall entropy: {}'.format(old_overall_entropy))
-                print('New Number of blocks: {}'.format(old_num_blocks))
-                print("")
-
-                verbose = 1
-                n_thread = args.threads
-                batch_size = args.node_move_update_batch_size
-                vertex_num_in_neighbor_edges = np.empty(N, dtype=int)
-                vertex_num_out_neighbor_edges = np.empty(N, dtype=int)
-                vertex_num_neighbor_edges = np.empty(N, dtype=int)
-                vertex_neighbors = [np.concatenate((out_neighbors[i], in_neighbors[i])) for i in range(N)]
-
-                for i in range(N):
-                    vertex_num_out_neighbor_edges[i] = sum(out_neighbors[i][:,1])
-                    vertex_num_in_neighbor_edges[i] = sum(in_neighbors[i][:,1])
-                    vertex_num_neighbor_edges[i] = vertex_num_out_neighbor_edges[i] + vertex_num_in_neighbor_edges[i]
-                #delta_entropy_threshold = delta_entropy_threshold1 = 5e-4
-                delta_entropy_threshold = 1e-4
-
-                for j in [0,2,1]:
-                    if old_interblock_edge_count[j] == []:
-                        continue
-
-                    print("Updating previous state in bracket history.")
-
-                    M_old = old_interblock_edge_count[j].copy()
-                    M = old_interblock_edge_count[j]
-                    partition = old_partition[j]
-                    block_degrees_out = old_block_degrees_out[j]
-                    block_degrees_in = old_block_degrees_in[j]
-                    block_degrees = old_block_degrees[j]
-                    num_blocks = old_num_blocks[j]
-                    overall_entropy = old_overall_entropy[j]
-
-                    total_num_nodal_moves_itr = nodal_moves_parallel(n_thread, batch_size, args.max_num_nodal_itr, args.delta_entropy_moving_avg_window, delta_entropy_threshold, overall_entropy, partition, M, block_degrees_out, block_degrees_in, block_degrees, num_blocks, out_neighbors, in_neighbors, N, vertex_num_out_neighbor_edges, vertex_num_in_neighbor_edges, vertex_num_neighbor_edges, vertex_neighbors, verbose, args)
-
-                t1 = timeit.default_timer()
-                print("Intermediate nodal move time for part %d is %f" % (part,(t1-t0)))
-                t_part += (t1 - t0)
-            else:
-                # We are not doing partitioning yet. Just wait.
-                out_neighbors, in_neighbors, N, E, true_partition = \
-                                                load_graph(input_filename,
-                                                           load_true_partition=1,
-                                                           strm_piece_num=part,
-                                                           out_neighbors=out_neighbors,
-                                                           in_neighbors=in_neighbors,
-                                                           alg_state = None)
-
-            print("Loaded piece %d N %d E %d" % (part,N,E))
-            min_number_blocks = int(min_number_blocks / 2)
-
-        print('Running partition for part %d N %d E %d and min_number_blocks %d' % (part,N,E,min_number_blocks))
-
-        t0 = timeit.default_timer()
-        t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, alg_state = alg_state, min_number_blocks = min_number_blocks)
-        min_number_blocks /= 2
-
-        alg_state_copy = copy_alg_state(alg_state)
-        t1 = timeit.default_timer()
-        t_part += (t1 - t0)
-        print("Intermediate partition until save point for part %d is %f" % (part,(t1-t0)))
-
-        t0 = timeit.default_timer()
-        t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state_copy, min_number_blocks = 5)
-        t1 = timeit.default_timer()
-        t_part += (t1 - t0)
-        print("Intermediate partition until completion for part %d is %f" % (part,(t1-t0)))
-
-        print('Evaluate part %d' % (part))
-        precision,recall = evaluate_partition(true_partition, partition)
-
-        t_all_parts += t_part
-        print('Elapsed compute time for part %d is %f cumulative %f precision %f recall %f' % (part,t_part,t_all_parts,precision,recall))
-
-    return t_all_parts
 
 def do_main(args):
     global syms, t_prog_start
@@ -1636,23 +1298,27 @@ def do_main(args):
 
 
         if not args.test_resume:
-            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args)
+            t_elapsed_partition, partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition,
+                                                                    args)
         else:
             print("")
             print("Test stop functionality.")
             print("")
-            t_elapsed_partition,partition,alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 1, min_number_blocks = 0)
+            t_elapsed_partition, partition, alg_state = partition_static_graph(out_neighbors, in_neighbors, N, E,
+                                                                               true_partition, args, stop_at_bracket=1,
+                                                                               min_number_blocks=0)
 
             print("")
             print("Resume bracket search.")
             print("")
 
-            t_elapsed_partition,partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket = 0, alg_state = alg_state)
+            t_elapsed_partition, partition = partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition,
+                                                                    args, stop_at_bracket=0, alg_state=alg_state)
 
-        if true_partition is not None:
-            precision,recall = evaluate_partition(true_partition, partition)
+        if true_partition is not None and partition is not None:
+            precision, recall = evaluate_partition(true_partition, partition)
         else:
-            precision,recall = 1.0,1.0
+            precision, recall = 1.0, 1.0
 
         return t_elapsed_partition,precision,recall
     else:
@@ -1664,7 +1330,8 @@ def do_main(args):
     return
 
 
-def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket=0, alg_state=None, min_number_blocks=0):
+def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, args, stop_at_bracket=0, alg_state=None,
+                           min_number_blocks=0):
     global syms, t_prog_start
 
     if args.verbose > 1:
@@ -1672,11 +1339,15 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
         print("Overall true partition statistics:")
         print("[" + "".join(("%5d : %3d, " % (i,e,) for i,e in sorted([(e,i) for (i,e) in Counter(true_partition).items()]))) + "]\n")
 
-
-    if args.predecimation > 1:
-        out_neighbors, in_neighbors, N, E, true_partition = \
-                                decimate_graph(out_neighbors, in_neighbors, true_partition,
-                                               decimation = args.predecimation, decimated_piece = 0)
+    # if args.predecimation > 1:
+    #     if args.snowball:
+    #         out_neighbors, in_neighbors, N, E, true_partition = \
+    #                                 decimate_graph_snowball(out_neighbors, in_neighbors, true_partition,
+    #                                                         decimation = args.predecimation, decimated_piece = 0)
+    #     else:
+    #         out_neighbors, in_neighbors, N, E, true_partition = \
+    #                                 decimate_graph(out_neighbors, in_neighbors, true_partition,
+    #                                             decimation = args.predecimation, decimated_piece = 0)
 
     if args.mpi:
         from mpi4py import MPI
@@ -1691,12 +1362,21 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
         print("Hello! I am rank %4d from %4d running in total limit is %d" % (comm.rank, comm.size, mpi_procs))
 
         decimation = mpi_procs
-        out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, true_partition_piece \
-            = decimate_graph(out_neighbors, in_neighbors, true_partition,
-                             decimation, decimated_piece = comm.rank)
+        # out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, true_partition_piece \
+        #     = decimate_graph(out_neighbors, in_neighbors, true_partition,
+        #                      decimation, decimated_piece = comm.rank)
+        if args.snowball:
+            out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, true_partition_piece, sampled_vertices \
+                = decimate_graph_snowball(out_neighbors, in_neighbors, true_partition,
+                                          decimation, decimated_piece=comm.rank)
+        else:
+            out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, true_partition_piece, sampled_vertices \
+                = decimate_graph(out_neighbors, in_neighbors, true_partition,
+                                  decimation, decimated_piece=comm.rank)
 
         t_prog_start = timeit.default_timer()
-        alg_state, M = find_optimal_partition(out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, args, stop_at_bracket = False, verbose = args.verbose)
+        alg_state, M = find_optimal_partition(out_neighbors_piece, in_neighbors_piece, N_piece, E_piece, args,
+                                              stop_at_bracket=False, verbose=args.verbose)
         t_prog_end = timeit.default_timer()
 
         partition = alg_state[0][0][1]
@@ -1704,20 +1384,24 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
         if comm.rank != 0:
             comm.send(true_partition_piece, dest=0, tag=11)
             comm.send(partition, dest=0, tag=11)
+            comm.send(sampled_vertices, dest=0, tag=12)
             comm.Barrier()
-            return
+            return None, None
         else:
             true_partitions = [true_partition_piece] + [comm.recv(source=i, tag=11) for i in range(1, mpi_procs)]
             partitions = [partition] + [comm.recv(source=i, tag=11) for i in range(1, mpi_procs)]
+            vertex_lists = [sampled_vertices] + [comm.recv(source=i, tag=12) for i in range(1, mpi_procs)]
             comm.Barrier()
-
     elif args.decimation > 1:
         decimation = args.decimation
 
         # Re-start timer after decimation is complete
         t_prog_start = timeit.default_timer()
 
-        pieces = [decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation)]
+        if args.snowball:
+            pieces = [decimate_graph_snowball(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation)]
+        else:
+            pieces = [decimate_graph(out_neighbors, in_neighbors, true_partition, decimation, i) for i in range(decimation)]
         _,_,_,_,true_partitions = zip(*pieces)
 
         if args.verbose > 1:
@@ -1749,11 +1433,11 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
         partition = alg_state[0][0][1]
         t_prog_end = timeit.default_timer()
 
-        if args.test_decimation > 0:
-            decimation = args.test_decimation
-            true_partitions = [true_partition[i::decimation] for i in range(decimation)]
-            partitions = [partition[i::decimation] for i in range(decimation)]
-
+        # Make sure this old recombination is never happening with snowball sampling
+        # if args.test_decimation > 0:
+        #     decimation = args.test_decimation
+        #     true_partitions = [true_partition[i::decimation] for i in range(decimation)]
+        #     partitions = [partition[i::decimation] for i in range(decimation)]
 
 
     # Either multiprocess pool or MPI results need final merging.
@@ -1768,8 +1452,10 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
 
 
         # Merge all pieces into a smaller number.
-        partitions = merge_partitions(partitions,
-                                      4, out_neighbors, args.verbose, args.sparse_data, args.sparse_algorithm)
+        # partitions = merge_partitions(partitions,
+        #                               4, out_neighbors, args.verbose, args.sparse_data, args.sparse_algorithm)
+        partitions = resolve_partitions(partitions, vertex_lists, 4, out_neighbors, args.verbose, args.sparse_data,
+                                        args.sparse_algorithm)
 
         # Merge piece into  big partition and then merge down.
         Bs = [max(i) + 1 for i in partitions]
@@ -1798,9 +1484,13 @@ def partition_static_graph(out_neighbors, in_neighbors, N, E, true_partition, ar
     print('\nGraph partition took %.4f seconds' % (t_elapsed_partition))
 
     if stop_at_bracket:
-        return t_elapsed_partition,partition,alg_state
+        print("stopping at bracket")
+        return t_elapsed_partition, partition, alg_state
     else:
-        return t_elapsed_partition,partition
+        print("NOT stopping at bracket")
+        return t_elapsed_partition, partition
+# End of partition_static_graph()
+
 
 # See: https://stackoverflow.com/questions/242485/starting-python-debugger-automatically-on-error
 def info(type, value, tb):
@@ -1823,6 +1513,7 @@ if __name__ == '__main__':
     parser.add_argument("-t", "--threads", type=int, required=False, default=0)
     parser.add_argument("-p", "--parts", type=int, required=False, default=0)
     parser.add_argument("-d", "--decimation", type=int, required=False, default=0)
+    parser.add_argument("--snowball", action="store_true", default=False, help="Specify this option to use snowball partitioning")
     parser.add_argument("-v", "--verbose", type=int, required=False, default=0)
     parser.add_argument("-b", "--node-move-update-batch-size", type=int, required=False, default=1)
     parser.add_argument("-g", "--node-propose-batch-size", type=int, required=False, default=4)
